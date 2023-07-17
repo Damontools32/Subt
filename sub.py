@@ -3,6 +3,7 @@ import telegram
 from telegram.ext import Updater, MessageHandler, Filters
 from youtube_transcript_api import YouTubeTranscriptApi
 from pysrt import SubRipFile, SubRipItem, SubRipTime
+from googletrans import Translator
 
 # Initialize the bot
 bot = telegram.Bot(token='YOUR_TELEGRAM_BOT_TOKEN')
@@ -14,23 +15,28 @@ def process_video(url, chat_id):
     # Extract video_id from url
     video_id = url.split('=')[-1]
 
-    # Get the auto-translated captions
+    # Initialize the Translator
+    translator = Translator()
+
+    # Get the auto-generated English captions
     try:
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        auto_translated_transcript = transcript_list.find_generated_transcript(['fa'])
+        transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
     except Exception as e:
-        bot.send_message(chat_id=chat_id, text=f'Error getting auto-translated subtitles: {str(e)}')
+        bot.send_message(chat_id=chat_id, text=f'Error getting English subtitles: {str(e)}')
         return
 
-    # Convert the translated captions to SRT format
-    subtitles = auto_translated_transcript.fetch()
+    # Convert the translated English captions to SRT format
     srt_subtitles = SubRipFile()
-    for i, sub in enumerate(subtitles, 1):
+    for i, sub in enumerate(transcript_list, 1):
+        # Translate English text to Persian
+        translated_text = translator.translate(sub['text'], dest='fa').text
+
+        # Create a SubRipItem with the translated text
         item = SubRipItem(
             index=i,
             start=SubRipTime.from_seconds(sub['start']),
             end=SubRipTime.from_seconds(sub['start'] + sub['duration']),
-            text=sub['text']
+            text=translated_text
         )
         srt_subtitles.append(item)
 
@@ -39,7 +45,11 @@ def process_video(url, chat_id):
     srt_subtitles.save(filename, encoding='utf-8')
 
     # Send the file via telegram
-    bot.send_document(chat_id=chat_id, document=open(filename, 'rb'))
+    with open(filename, 'rb') as f:
+        bot.send_document(chat_id=chat_id, document=f)
+
+    # remove the file after sending
+    os.remove(filename)
 
 # Define a function to handle incoming messages
 def handle_message(update, context):
