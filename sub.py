@@ -1,35 +1,42 @@
 import os
 import telegram
 from telegram.ext import Updater, MessageHandler, Filters
-from pytube import YouTube
-from googletrans import Translator
-from pysrt import SubRipFile
+from youtube_transcript_api import YouTubeTranscriptApi
+from pysrt import SubRipFile, SubRipItem, SubRipTime
 
-# Initialize the bot and the translator
+# Initialize the bot
 bot = telegram.Bot(token='YOUR_TELEGRAM_BOT_TOKEN')
 updater = Updater(token='YOUR_TELEGRAM_BOT_TOKEN')
 dispatcher = updater.dispatcher
-translator = Translator()
 
 # Function to download captions, translate them and send them via telegram
 def process_video(url, chat_id):
-    # Download the video
-    yt = YouTube(url)
+    # Extract video_id from url
+    video_id = url.split('=')[-1]
 
-    # Download the captions
-    caption = yt.captions.get_by_language_code('en')
-    srt_captions = caption.generate_srt_captions()
+    # Get the auto-translated captions
+    try:
+        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        auto_translated_transcript = transcript_list.find_generated_transcript(['fa'])
+    except Exception as e:
+        bot.send_message(chat_id=chat_id, text=f'Error getting auto-translated subtitles: {str(e)}')
+        return
 
-    # Translate the captions
-    translated_captions = ""
-    for line in srt_captions.splitlines():
-        translation = translator.translate(line, dest='fa')
-        translated_captions += translation.text + "\n"
+    # Convert the translated captions to SRT format
+    subtitles = auto_translated_transcript.fetch()
+    srt_subtitles = SubRipFile()
+    for i, sub in enumerate(subtitles, 1):
+        item = SubRipItem(
+            index=i,
+            start=SubRipTime.from_seconds(sub['start']),
+            end=SubRipTime.from_seconds(sub['start'] + sub['duration']),
+            text=sub['text']
+        )
+        srt_subtitles.append(item)
 
-    # Write the translated captions to a file
-    filename = "translated_captions.srt"
-    with open(filename, 'w') as f:
-        f.write(translated_captions)
+    # Write the SRT subtitles to a file
+    filename = f"{video_id}.srt"
+    srt_subtitles.save(filename, encoding='utf-8')
 
     # Send the file via telegram
     bot.send_document(chat_id=chat_id, document=open(filename, 'rb'))
